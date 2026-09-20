@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 
 from app.auth import authenticate_user, create_access_token, get_current_user, require_researcher
 from app.cqrs import (
+    METRIC_DUPLICATE_POLICY,
     ConflictError,
     DomainError,
     abort_run,
@@ -40,6 +41,15 @@ def _handle_domain(exc: DomainError) -> None:
 @router.get("/health")
 def health():
     return {"status": "ok", "service": "experiment-provenance"}
+
+
+@router.get("/policies/metrics")
+def metric_policy(_user: dict = Depends(get_current_user)):
+    """同 Run 内重复指标名策略（写死 reject），供前端指标区与提交反馈保持一致。"""
+    return {
+        "duplicate_name": METRIC_DUPLICATE_POLICY,
+        "description": "同一 Run 内重复指标名：reject = 拒绝第二次记录，不以新值覆盖",
+    }
 
 
 @router.post("/auth/login", response_model=TokenResponse)

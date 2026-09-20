@@ -77,4 +77,9 @@ export async function getLineage(id) {
   return data
 }
 
+export async function getMetricPolicy() {
+  const { data } = await api.get('/policies/metrics')
+  return data
+}
+
 export default api

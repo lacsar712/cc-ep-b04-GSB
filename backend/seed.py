@@ -59,11 +59,12 @@ def seed() -> None:
             step=1,
             expected_version=run1.version,
         )
+        # 重名策略为 reject：同一 Run 内不可再次提交 tm_score，这里用新指标名记录精修结果
         run1 = record_metric(
             db,
             run_id=run1.id,
             actor="researcher",
-            name="tm_score",
+            name="tm_score_refined",
             value=0.81,
             step=2,
             expected_version=run1.version,

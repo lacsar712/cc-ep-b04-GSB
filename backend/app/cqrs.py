@@ -13,6 +13,11 @@ from app.models import EventStore, RunProjection
 
 TERMINAL_STATUSES = {"completed", "aborted"}
 
+# 同一 Run 内重复指标名的策略，写死为 reject：
+# 第二次提交同名指标会被拒绝（不以新值覆盖旧值）；
+# 首次 MetricRecorded 事件仍保留在 event_store，可在事件时间线追溯。
+METRIC_DUPLICATE_POLICY = "reject"
+
 
 class DomainError(Exception):
     def __init__(self, message: str, status_code: int = 400):
@@ -24,6 +29,14 @@ class DomainError(Exception):
 class ConflictError(DomainError):
     def __init__(self, message: str = "版本冲突或终态不可变更"):
         super().__init__(message, status_code=409)
+
+
+class DuplicateMetricError(ConflictError):
+    def __init__(self, name: str):
+        super().__init__(
+            f"指标名 '{name}' 在本 Run 已存在：当前重名策略为 reject，"
+            "拒绝第二次记录，不以新值覆盖。请改用新指标名。"
+        )
 
 
 def _now() -> datetime:
@@ -146,6 +159,15 @@ def _check_expected_version(proj: RunProjection | None, expected_version: int) -
         )
 
 
+def _metric_names_from_events(db: Session, run_id: UUID) -> set[str]:
+    """以 event_store 为权威来源，列出该 Run 已记录成功的指标名。"""
+    stmt = select(EventStore.payload_json).where(
+        EventStore.aggregate_id == run_id,
+        EventStore.event_type == "MetricRecorded",
+    )
+    return {row["name"] for row in db.scalars(stmt).all()}
+
+
 def start_run(
     db: Session,
     *,
@@ -199,6 +221,11 @@ def record_metric(
     proj = _get_projection(db, run_id)
     _require_running(proj)
     _check_expected_version(proj, expected_version)
+
+    if METRIC_DUPLICATE_POLICY == "reject":
+        existing_names = _metric_names_from_events(db, run_id)
+        if name in existing_names:
+            raise DuplicateMetricError(name)
 
     event = _append_event(
         db,
