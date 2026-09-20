@@ -54,8 +54,8 @@ def seed() -> None:
             db,
             run_id=run1.id,
             actor="researcher",
-            name="tm_score",
-            value=0.72,
+            name="rmsd",
+            value=2.1,
             step=1,
             expected_version=run1.version,
         )

@@ -13,6 +13,11 @@ from app.models import EventStore, RunProjection
 
 TERMINAL_STATUSES = {"completed", "aborted"}
 
+# 同一条 Run 内重复指标名的策略（写死，不接受命令覆盖）：
+#   "reject"   —— 已存在同名指标时，拒绝第二次记录，返回 409，不追加任何事件
+#   "overwrite"—— 以新值覆盖同名指标（当前未启用，仅保留语义说明）
+METRIC_NAME_POLICY = "reject"
+
 
 class DomainError(Exception):
     def __init__(self, message: str, status_code: int = 400):
@@ -24,6 +29,16 @@ class DomainError(Exception):
 class ConflictError(DomainError):
     def __init__(self, message: str = "版本冲突或终态不可变更"):
         super().__init__(message, status_code=409)
+
+
+class MetricNameConflictError(ConflictError):
+    """同一 Run 内已存在同名指标，按 reject 策略拒绝本次记录。"""
+
+    def __init__(self, name: str):
+        super().__init__(
+            f"指标名 '{name}' 在本 Run 已存在：当前策略为 reject（拒绝重复），"
+            "不会覆盖既有值，请更换指标名后重试"
+        )
 
 
 def _now() -> datetime:
@@ -199,6 +214,13 @@ def record_metric(
     proj = _get_projection(db, run_id)
     _require_running(proj)
     _check_expected_version(proj, expected_version)
+
+    # 写死的同名指标策略：reject —— 在追加任何事件之前拦截，
+    # 保证 event_store 不写入被拒绝的命令，投影中每个指标名唯一。
+    if METRIC_NAME_POLICY == "reject":
+        existing_names = {m.get("name") for m in (proj.metrics_json or [])}
+        if name in existing_names:
+            raise MetricNameConflictError(name)
 
     event = _append_event(
         db,

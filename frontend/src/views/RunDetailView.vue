@@ -42,6 +42,10 @@
     <div class="grid-2" style="margin-bottom: 16px">
       <div class="card">
         <h3 style="margin-top: 0">指标（投影）</h3>
+        <p class="muted" style="margin-top: 0; font-size: 12px">
+          同名指标策略：<n-tag size="small" type="error">reject 拒绝重复</n-tag>
+          同一 Run 内每个指标名仅保留一条；重复提交会被拒绝且不覆盖原值。
+        </p>
         <n-data-table
           size="small"
           :columns="metricCols"
@@ -65,10 +69,27 @@
       <div class="grid-2">
         <div>
           <h4>RecordMetric</h4>
-          <n-input v-model:value="metric.name" placeholder="指标名" style="margin-bottom: 8px" />
+          <n-input
+            v-model:value="metric.name"
+            placeholder="指标名"
+            :status="duplicateName ? 'error' : undefined"
+            style="margin-bottom: 8px"
+          />
+          <n-alert v-if="duplicateName" type="error" size="small" :show-icon="true" style="margin-bottom: 8px">
+            指标名「{{ metric.name }}」在本 Run 已记录（当前值 {{ duplicateValue }}）。
+            策略为 reject：提交将被拒绝，不会覆盖。请更换指标名。
+          </n-alert>
           <n-input-number v-model:value="metric.value" style="width: 100%; margin-bottom: 8px" />
           <n-input-number v-model:value="metric.step" :min="0" style="width: 100%; margin-bottom: 8px" />
-          <n-button type="primary" :loading="busy" @click="doMetric">记录指标</n-button>
+          <n-button
+            type="primary"
+            :loading="busy"
+            :disabled="duplicateName"
+            @click="doMetric"
+          >记录指标</n-button>
+          <p class="muted" style="font-size: 12px; margin-bottom: 0">
+            同一 Run 内不可重复记录同名指标（reject）。
+          </p>
         </div>
         <div>
           <h4>AttachArtifact</h4>
@@ -126,6 +147,18 @@ const artifact = reactive({
 })
 
 const canWrite = computed(() => auth.role === 'researcher' && run.value?.status === 'running')
+
+// 同名指标 reject 策略的前端镜像：指标名已存在则提示并阻止提交
+const duplicateName = computed(() => {
+  const name = (metric.name || '').trim()
+  if (!name || !run.value) return false
+  return (run.value.metrics_json || []).some((m) => m.name === name)
+})
+const duplicateValue = computed(() => {
+  const name = (metric.name || '').trim()
+  const found = (run.value?.metrics_json || []).find((m) => m.name === name)
+  return found ? found.value : ''
+})
 const statusLabel = computed(() => {
   const m = { running: '进行中', completed: '已完成', aborted: '已中止' }
   return m[run.value?.status] || run.value?.status
@@ -139,6 +172,12 @@ const metricCols = [
   { title: 'name', key: 'name' },
   { title: 'value', key: 'value' },
   { title: 'step', key: 'step' },
+  { title: '记录人', key: 'actor' },
+  {
+    title: '记录时间',
+    key: 'recorded_at',
+    render: (row) => (row.recorded_at ? formatTime(row.recorded_at) : '—'),
+  },
 ]
 const artifactCols = [
   { title: 'name', key: 'name' },
@@ -173,9 +212,19 @@ async function withBusy(fn) {
 }
 
 function doMetric() {
+  const name = (metric.name || '').trim()
+  if (!name) {
+    message.warning('请填写指标名')
+    return
+  }
+  // 与后端 reject 策略一致：提交前再次拦截并给出明确拒绝说明
+  if (duplicateName.value) {
+    message.error(`指标名「${name}」已存在：策略为 reject，拒绝重复记录，不覆盖原值 ${duplicateValue.value}`)
+    return
+  }
   return withBusy(async () => {
     await recordMetric(run.value.id, {
-      name: metric.name,
+      name,
       value: metric.value,
       step: metric.step,
       expected_version: run.value.version,
